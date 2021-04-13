@@ -1,0 +1,209 @@
+---
+title: English Premier League Player Statistics & Correlation between Competitive
+  Balance and Number of Red and Yellow Cards
+author: "Sarin Sulahian"
+date: "12/10/2020"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r,include=FALSE}
+libs<-c("caret","tidyr", "ggplot2", "knitr", "dplyr", "readr", "shiny", "corrplot", "scales", "reldist", "ggpubr","plyr","RColorBrewer","ggthemes","devtools")
+load_libraries<-function(libs){
+  new_libs <- libs[!(libs %in% installed.packages()[,"Package"])]
+  if(length(new_libs)>0) {install.packages(new_libs)}
+  lapply(libs, library, character.only = TRUE)
+} 
+load_libraries(libs)
+install_github("HABET/CSE270")
+library("SportsAnalytics270")
+```
+
+```{r,include=FALSE}
+EP <- read.csv("EP.csv")
+PLS <- read.csv("PLS.csv")
+PLS <- PLS %>% 
+  group_by(Season)
+```
+
+
+##Objective
+
+The objective of this small project is to first look at the player statistics in the English Premier League and then to look if the number of yellow and red cards gotten affects the competitive balance. It is important to look at the statistics of the players in any given league in any given sports to grasp an idea on how the team or league is doing. This can be helpful to choose which players are better in what terms, to see who has an advantage in either assisting or scoring, and so on.
+
+1)I took players stats, more specifically their goals conceded, assisted and scored to see the relationship, and also to see the correlation between Win Percentage and goals conceded/assisted/scored.
+
+2)Getting a red or yellow card in a game can affects a players ability or motivation to continue to play the game, and I wanted to see if in the English Premier League that was true.
+
+
+##Data
+My data included only season 2018-2019 and I retrieved it from https://footystats.org/download-stats-csv. I looked at goals conceded vs goals assisted and scored.Then, I calculated the winning percentage and plotted those findings against it.
+
+My data for the English Premier League is retrieved from http://football-data.co.uk with 16 seasons and I took the number of yellow and red cards received.
+
+\newpage
+##preprocessing
+I processed the data to how I would like to look like for calculating the stats.
+
+```{r, include=FALSE}
+EP1 <- EP %>%
+  dplyr::select(full_name,position,Current.Club,appearances_overall,goals_home,goals_away,goals_overall,assists_overall,assists_away,assists_home,conceded_away,conceded_home,conceded_overall,red_cards_overall,yellow_cards_overall)
+EP1$WP <- (EP1$goals_overall/EP1$appearances_overall)*100 
+EP1$GD <- ((EP1$goals_overall+EP1$assists_overall)-EP1$conceded_overall)
+```
+
+```{r, include=TRUE, echo=FALSE}
+head(EP1, n=5)
+```
+##English League Player Summary
+
+```{r,echo=FALSE}
+ggplot(EP1,aes( x = conceded_overall , y= reorder(full_name,goals_overall +assists_overall))) +
+  geom_point(aes(color=Current.Club), size = 3.5, alpha = 0.5) +
+  scale_color_manual(values=colorRampPalette(brewer.pal(8, "Set1"))(length(unique(EP1$Current.Club)))) +
+  theme_fivethirtyeight()  + 
+  ggtitle('English League Player Summary
+       x = Conceded Overall,y = Goals + Assists') +
+  theme(legend.position='right',legend.direction='vertical')
+
+```
+Here I did a visualization on the players with Conceded Goals on the x-axis and Goals+Assits on the y-axis. It also includes the current club in which the player is in. 
+
+##Correlation of Win Percentage and Goals Difference of players
+
+```{r, echo=FALSE}
+#Payer WP vs Diff
+ggplot(EP1, aes(x=GD, y=WP))+ geom_point()+
+  geom_smooth(method="lm", se=F)+
+  labs(x="Goal Difference", y="Winning Percentage")
+```
+The correlation between Winning Percentage and Goals difference (asissts, conceded,actual goals). There is no clear correlation between the two variables.
+
+\newpage
+
+```{r, include=TRUE, echo=FALSE}
+options(scipen = 999)
+mod <- lm(WP~GD, data=EP1)
+summary(mod)
+```
+```{r,echo=FALSE}
+coefficients(mod)
+```
+```{r}
+#1 unit increase in goal-conceded difference increases the WP of the player by 7.46%
+```
+
+Calculating exponents
+```{r,echo=FALSE}
+exp <- 1.50*log((sum(EP1$goals_overall)+sum(EP1$conceded_overall))/sum(EP1$appearances_overall))+0.45
+```
+
+
+```{r,echo=FALSE}
+EP1 <- na.omit(EP1)
+EP1$PW <- EP1$goals_overall^exp/(EP1$goals_overall^exp+EP1$conceded_overall^exp)
+error <- EP1$PW - EP1$WP
+sqrt(mean(error^2))
+```
+We have 14.7% error rate. It is a moderate percentage although it could be better.
+
+\newpage
+##Correlation of Competitive Balance vs Red and Yellow cards in EPL
+
+```{r,include=FALSE}
+PLwide_to_long<-PLS%>%
+  dplyr::select(Season,HomeTeam,AwayTeam, FTHG, FTAG, HR, AR, HY, AY)%>%
+  gather(key='flag', value = 'Team',-c(Season, FTHG, FTAG, HR, AR, HY, AY)) %>%
+  mutate(scored=ifelse(flag=='HomeTeam',as.numeric(FTHG),as.numeric(FTAG)),
+         conceded=ifelse(flag=='HomeTeam',as.numeric(FTAG),as.numeric(FTHG)),
+         WL=ifelse(scored>conceded,'W',ifelse(scored<conceded,"L",'D')),
+          Points=ifelse(scored>conceded,3,ifelse(scored<conceded,0,1)))%>%
+  dplyr::select(-c(FTHG,FTAG))
+
+PLwide_to_long
+```
+```{r, include=FALSE}
+PL_standing<-PLwide_to_long%>%
+  group_by(Season,Team,WL, HR, AR, HY, AY)%>%
+  dplyr::summarise(Total_Points=sum(Points),Matches=n(), scored=sum(scored), conceded=sum(conceded))%>%
+  group_by(Season)%>%
+  spread(WL,Matches)%>%
+  group_by(Season,Team)%>%
+  dplyr::summarise(Scored=sum(scored), Conceded=sum(conceded),W=sum(W,na.rm = TRUE), D=sum(D,na.rm = TRUE),L=sum(L,na.rm = TRUE),Total_Points=sum(Total_Points), HR=sum(HR), AR=sum(AR), HY=sum(HY),AY=sum(AY))%>%
+  mutate(Position=dense_rank(desc(rank(Total_Points,ties.method = "first"))),
+         Matches=D+L+W)%>%
+  arrange(Position)
+PL_standing
+```
+
+Data Overview
+```{r, include=TRUE, echo=FALSE}
+head(PL_standing, n=5)
+```
+```{r, include=FALSE}
+PL_red_yellow_cards<-PL_standing%>%
+  group_by(Season)%>%
+  dplyr::summarise(Red_Yellow_Card=sum(HR+AR+HY+AY))
+```
+
+##Herfindahl-Hirschman Index
+
+Herfindahl-Hirschman is a competitive balance measure which views the unequal distribution in play outcomes and a good measure to compute the competitiveness. We calculate the Winning Percentage and squared, and then the summation.
+
+```{r, include=FALSE}
+PL_WP <- PL_standing %>% 
+  mutate(WP = Total_Points/3/Matches)
+```
+
+```{r, include=FALSE}
+PL_HHI <- PL_WP %>%
+  group_by(Season) %>%
+  mutate(Perc = WP / sum(WP)) %>%
+  dplyr::summarise(HHI = sum(Perc^2)-1/n()) 
+
+```
+
+## Noll-Scully
+Noll Scully is another measure of the competitive balance in sports. The model uses the standard deviation of all teams It is considered as the ideal measure, if the number is 1 it means there is perfect competition, if it is below 1 it means teams playing are closer to the wins, this is a rarer case. 
+```{r, include=FALSE}
+PL_NS<- PL_WP %>%
+  group_by(Season) %>%
+  mutate(Perc = WP / sum(WP)) %>%
+  dplyr::summarise(id_s = 0.5/sqrt(n()), NS = sd(WP)/id_s) %>% 
+  dplyr::select(-id_s)
+
+```
+\newpage
+
+##Visualization
+
+```{r, include=FALSE}
+PL_CompetitiveB <- left_join(PL_red_yellow_cards, PL_HHI, by = "Season")
+PL_CompetitiveB<- left_join(PL_CompetitiveB, PL_NS, by="Season")
+```
+```{r, include=TRUE, echo=FALSE}
+PL_CompetitiveB
+```
+
+
+```{r, include=FALSE}
+Noll_Scully <- ggplot(PL_CompetitiveB)+
+  geom_point(aes(Red_Yellow_Card, NS))
+  labs(title="NS vs. Number of Yellow and Red Cards")
+```
+
+```{r, include=FALSE}
+HHI <- ggplot(PL_CompetitiveB, aes(Red_Yellow_Card, HHI))+geom_point()+
+  labs(title="HHI vs. N of Yellow and Red Cards")
+```
+
+```{r, echo=FALSE}
+ggarrange(Noll_Scully, HHI,
+          ncol = 2, nrow = 1)
+```
+##Comparing
+on the graphs above we can see the correlation between competitive balance in teams and the number of red and yellow cards the teams received throughout seasons. What do the plots show? In real terms there is no strong correlation or none at all. This was surprising for me to find as I was interested if receiving many red and yellow cards would demotivate the player and decrease the competitiveness of the team overtime if happened continuously. There are always some other underlying factors that because of them there is no correlation, for example not every referee is strict and some are biased to whom they give red/yellow cards and that is why there is an issue of unfairness in the game, thus we cannot say for sure it is a complete result of.
